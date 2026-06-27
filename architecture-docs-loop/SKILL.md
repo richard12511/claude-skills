@@ -99,6 +99,21 @@ cat ~/.claude/skills/architecture-docs-loop/prompt-template.md | gnhf \
 Run metadata (prompt, notes, transcripts) lands in `.gnhf/runs/<slug>/` in the
 worktree (gitignored).
 
+**Unattended (overnight) launch:** for a fire-and-forget run that doesn't depend on
+a live Claude session, use the bundled driver script — it is the whole outer loop
+in bash (discover → gnhf per repo → verify → next):
+
+```sh
+~/.claude/skills/architecture-docs-loop/run.sh --dry-run   # preview which repos
+~/.claude/skills/architecture-docs-loop/run.sh             # run the loop (~/Code/play)
+~/.claude/skills/architecture-docs-loop/run.sh /other/dir  # a different directory
+```
+
+**Interactive (host-agent-driven) launch:** when supervising quality run by run,
+the host agent drives the loop itself — but it MUST start each gnhf run as a
+**background** process (a per-repo run exceeds the foreground command timeout) and
+proceed when notified of completion.
+
 ## Reusing it on a different directory
 
 Set `PLAY` to the target directory in the discovery loop and the launch. The
