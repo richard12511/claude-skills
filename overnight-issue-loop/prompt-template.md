@@ -1,55 +1,64 @@
 <!--
   gnhf worker prompt for ONE issue of the overnight-issue-loop.
-  The supervisor appends the chosen issue (gh-axi issue view <n>) under
-  "## The issue to implement" before piping this into gnhf --worktree.
-  The worker ONLY implements + verifies + commits. It never gates/pushes/PRs/merges.
+  The supervisor fills in the {{PROFILE}} placeholders from the repo profile
+  (see SKILL.md → "Repo profile"), then appends the chosen issue
+  (gh-axi issue view <n>) under "## The issue to implement" before piping this
+  into gnhf. The worker ONLY implements + verifies + commits. It never
+  gates/pushes/PRs/merges.
 -->
 
-You are implementing ONE GitHub issue for the **next_rep_mobile** app (an Expo /
-React Native app). gnhf runs you in a dedicated git worktree with fresh context.
-Your job: implement the issue well, verify it locally, leave it committed — then
-stop. The issue you are assigned is appended at the bottom of this prompt.
+You are implementing ONE GitHub issue for **{{APP_NAME}}** ({{APP_DESCRIPTION}}).
+gnhf runs you with fresh context, based on an up-to-date `main`. Your job:
+implement the issue well, verify it locally with the exact commands below, leave
+it committed — then stop. The issue you are assigned is appended at the bottom.
 
-## What this app uses to verify
-- `npm run typecheck`  (tsc --noEmit)
-- `npm run lint`       (expo lint)
-- `npm test`           (jest)
-All three must pass before you stop.
+## What this app uses to verify (use ONLY these — do not invent others)
+{{VERIFY_COMMANDS}}
+All of them must pass before you stop.
+
+**Do NOT try to launch, serve, or drive the app in a browser/simulator/device to
+"see" the change.** That path burns enormous token budgets flailing on
+environment setup and is out of scope for this worker. Correctness is proven by
+the verify commands above (and tests you add), not by running the UI. Visual
+confirmation is the human reviewer's job after the gate.
 
 ## 1. Read the handoff first
 If `notes.md` exists, read it — it carries gotchas from prior issues in this run.
 
-## 2. Spec the work yourself (no human in the loop)
-Think it through like a brief design pass, but **decide autonomously**:
-- For every choice you would normally ask a user about, write the real **pros and
-  cons** of each option, then pick — **favoring good user experience over minimal
-  changes made just to keep the diff small.** This is a polish-quality app; lean
-  toward the option a user would actually prefer.
-- Do NOT invoke the superpowers `brainstorming` skill (it stops to ask for approval
-  and will stall this unattended run). Do the reasoning inline instead.
-Write a short spec (goal, the UX decisions you made and why, the plan) before coding.
+## 2. Right-size the work, then spec it (no human in the loop)
+First gauge the issue's size and **match your effort to it** — a one-line change
+gets a one-line plan, not a research project. Then, for genuine design choices (not
+mechanical edits), weigh the real pros and cons and **decide autonomously**, favoring
+the option a real user would prefer over a minimal diff made just to keep it small.
+Do NOT invoke the superpowers `brainstorming` skill (it stops for approval and will
+stall this unattended run) — do the reasoning inline. Write a spec whose depth is
+proportional to the change: a line or two for a small issue, a short paragraph for a
+larger one.
 
-## 3. Implement, subagent-driven
-Dispatch focused subagents for heavy exploration and implementation so your own
-context stays lean. Follow the app's existing patterns and structure. Write tests
-where they fit (TDD when practical). Keep the change scoped to this one issue — no
-unrelated refactors.
+## 3. Implement — lean by default
+- **Read narrowly.** Open only the files this issue touches plus their direct
+  dependencies. Don't survey the whole codebase "just in case."
+- **Dispatch subagents ONLY when the exploration or implementation is genuinely
+  large** (many files, or an unfamiliar subsystem). For a small, localized change do
+  it inline — spawning subagents for a tiny task multiplies token cost for no benefit.
+- **Prefer the smallest sound change.** Follow existing patterns; inline a trivial
+  helper rather than creating a new module/file unless it is reused or non-trivial.
+- Write tests where they add real signal. Keep the change scoped to this one issue —
+  no unrelated refactors.
 
 ## 4. Verify locally (required)
-Run `npm run typecheck && npm run lint && npm test`. Fix until all three pass. If
-you genuinely cannot make them pass, stop and explain the blocker in your report and
-in `notes.md` — do not fake success.
+Run the verify commands listed above. Fix until they all pass. If you genuinely
+cannot make them pass within your iteration budget, stop and explain the blocker
+in your report and in `notes.md` — do not fake success, and do not thrash.
 
 ## 5. Finish cleanly — DO NOT ship
-- Leave all changes committed on this worktree's feature branch (gnhf commits for
-  you). Make sure the working tree is clean and the three checks pass.
+- Leave all changes committed on your feature branch (gnhf commits for you). Make
+  sure the working tree is clean and the verify commands pass.
 - **Do NOT** push, open a PR, run `no-mistakes`, or merge. The supervisor gates and
   merges this work — that division is intentional.
 - Append to `notes.md` anything the next iteration should know (decisions made, app
   quirks, files touched, follow-ups you noticed but did not do).
-- Report: the issue, the UX decisions you made, what you changed, and typecheck/
-  lint/test status.
+- Report: the issue, the decisions you made, what you changed, and the verify status.
 
-Stop only when: the issue is implemented, `npm run typecheck` + `npm run lint` +
-`npm test` all pass, and the work is committed on the feature branch (nothing
-pushed, PR'd, gated, or merged).
+Stop only when: the issue is implemented, every verify command passes, and the work
+is committed on the feature branch (nothing pushed, PR'd, gated, or merged).

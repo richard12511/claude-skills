@@ -1,6 +1,6 @@
 ---
 name: overnight-issue-loop
-description: Use when the user wants an unattended overnight loop that works through a repo's open GitHub issues one at a time — picking the highest-value issue, implementing it, gating it through no-mistakes, and merging — and asks to run, kick off, or resume the "overnight issue loop". Currently tuned for next_rep_mobile.
+description: Use when the user wants an unattended overnight loop that works through a repo's open GitHub issues one at a time — picking the highest-value issue, implementing it, gating it through no-mistakes, and merging — and asks to run, kick off, or resume the "overnight issue loop". Repo-agnostic: the host fills in a Repo Profile for the target repo (known profiles below include next_rep_mobile and throughline).
 ---
 
 # Overnight Issue Loop
@@ -10,11 +10,13 @@ description: Use when the user wants an unattended overnight loop that works thr
 An unattended loop that ships open GitHub issues one at a time. It is a **hybrid**
 of two engines, split by who holds judgment:
 
-- **gnhf implements** each issue in an isolated `--worktree` with fresh context per
+- **gnhf implements** each issue in an isolated worktree with fresh context per
   issue (and `notes.md` handoff between issues). The worker writes a spec, codes it
   subagent-driven, and verifies locally — but it does **not** gate, push, PR, or merge.
-- **The host agent (you) supervises the irreversible parts**: drive the
-  `no-mistakes` gate with judgment, then merge clean PRs to main and sync.
+- **The host agent (you) supervises the irreversible parts**: preflight the repo,
+  hand the user the shimmed push that triggers the `no-mistakes` gate, monitor its
+  outcome with judgment, then merge clean PRs to main and sync. (The gate trigger is
+  currently a human step — see "Driving the gate".)
 
 This split exists because the safety rail — **stop if anything looks iffy** — lives
 at `no-mistakes`'s `ask-user` gate, which needs a human-escalable supervisor that a
@@ -22,133 +24,194 @@ headless worker can't be.
 
 **REQUIRED BACKGROUND:**
 - The **gnhf** engine — read the `gnhf` skill (`$(npm root -g)/gnhf/skills/gnhf/SKILL.md`). Run each issue in gnhf **Hands-Off** mode.
-- The **no-mistakes** gate — read the `no-mistakes` skill. You *create* a run with `git push no-mistakes`, then *drive* it via `no-mistakes axi run` (see step 3).
+- The **no-mistakes** gate — read the `no-mistakes` skill. For this loop the host *drives* the gate agentically (see "Driving the gate").
 
 The per-issue worker prompt is in [prompt-template.md](prompt-template.md).
 
+## Repo profile (FILL THIS IN before running)
+
+The loop is repo-agnostic. Before the first iteration, resolve a profile for the
+target repo — either from "Known profiles" below or by inspecting the repo. Every
+`{{PLACEHOLDER}}` in the worker prompt and the steps comes from here:
+
+| Field | What it is |
+| --- | --- |
+| `REPO` | `owner/name` for `gh-axi` (the GitHub origin) |
+| `LOCAL_PATH` | the primary local checkout path |
+| `APP_NAME` | short app name for the worker prompt |
+| `APP_DESCRIPTION` | one line, e.g. "an Expo / React Native app" or "a TS monorepo CLI + web inbox" |
+| `VERIFY_COMMANDS` | the EXACT commands that prove correctness locally — **only what actually exists in the repo.** Do not assume `typecheck`/`lint`/`test`; check `package.json`. |
+| `ELIGIBILITY` | which issues are in scope for this loop (and which to exclude) |
+| `GATE_NOTES` | per-repo gate quirks (e.g. "gate runs on the primary checkout — free the worker branch to it first") |
+
+### Known profiles
+
+**next_rep_mobile**
+- `REPO`: `richard12511/next_rep_mobile`
+- `APP_DESCRIPTION`: an Expo / React Native app
+- `VERIFY_COMMANDS`: `npm run typecheck` · `npm run lint` · `npm test`
+- `ELIGIBILITY`: UI/UX issues only; exclude pure infra/backend (historically #4 EAS client, #6 API URL, #18 server cleanup)
+- `GATE_NOTES`: gnhf worktree; standard gate
+
+**throughline**
+- `REPO`: `richard12511/throughline`
+- `LOCAL_PATH`: `/Users/richardschmidt/Code/play/throughline`
+- `APP_DESCRIPTION`: a TypeScript monorepo — a CLI (`packages/cli`) + core (`packages/core`) + a web "inbox" SPA (`packages/web`) that turns a GitHub PR into a guided walkthrough
+- `VERIFY_COMMANDS`: `npm run build` (tsc across all workspaces) · `npm test` (vitest). **There is NO `lint` and NO `typecheck` script — do not invent them; `build` is the type-check.**
+- `ELIGIBILITY`: self-contained, single-surface issues (bug fixes and small UI/UX affordances). Exclude exploratory/epic issues (e.g. #16 execution-sequence overlay, #33 inline agent chat) and anything needing infra the app lacks.
+- `GATE_NOTES`: the no-mistakes gate operates on the **primary checkout** (`LOCAL_PATH`). Before gating, the worker's branch must be checked out **there**, not held by a linked worktree. Also: this clone maps to no-mistakes repo hash `d32da9283a5f`; the sibling clone `throughline_2` maps to a *different* hash, so their gate slots are independent.
+
 ## The rails (don't violate)
 
-1. **Cap: 3 issues per run** (first-run setting). Stop early if no eligible issue
-   remains or the gate keeps failing.
-2. **Eligibility: UI/UX issues only.** Exclude pure infra/backend (for
-   next_rep_mobile that's #4 EAS client, #6 API URL, #18 server cleanup).
-3. **Merge only on a clean gate.** A `no-mistakes` outcome of `checks-passed` (or
-   `passed`) with a sane diff → merge. Anything else → don't merge.
+1. **Cap: N issues per run** (default 3; for a first supervised run, **1**). Stop early
+   if no eligible issue remains or the gate keeps failing.
+2. **Eligibility per profile.** Only pick issues the profile marks in scope.
+3. **Merge only on a clean gate.** A `no-mistakes` outcome of `passed`/`checks-passed`
+   with a sane diff → merge. Anything else → don't merge.
 4. **Stop-if-iffy = skip that issue and continue.** If an `ask-user` finding or the
    diff looks off, do NOT merge: leave the PR/branch, write a note, move to the next
-   issue. Do not halt the whole run.
+   issue. (In a 1-issue supervised run, "iffy" means **stop and report**, per the
+   caller's instruction.)
 5. **The worker never gates, pushes, PRs, or merges** — that's the supervisor's job.
+6. **Pause for user approval after each issue.** Default mode: at the end of every
+   issue (merged or skipped), stop and report; do NOT start the next issue until the
+   user says go. Only run fully back-to-back if the user explicitly asks for it.
 
-## Preflight (once, before the loop)
+## Token safety (the reason a prior QA loop burned ~8M tokens for 0 commits)
 
-**Check the no-mistakes daemon is free.** no-mistakes allows only ONE active run at
-a time; a parked/stale run on another branch silently blocks every gate. Run
-`no-mistakes axi` (home) and look for `other_branch_active_run`:
+The failure mode is a worker **spinning to get code running** on iteration 1 —
+never reaching a commit. Guard against it every run:
 
-- None → proceed.
-- A genuinely-active run that's the user's real work → stop and tell them; you
-  can't gate until it clears.
-- A **stale/parked** run (e.g. `awaiting_agent` for hours, or a CI step that timed
-  out after its PR already merged — `ci: awaiting_approval`, "CI monitoring timed
-  out") → that slot is stuck. Merging a PR on GitHub does NOT auto-resolve its local
-  run. Confirm the PR is merged/closed, then free it:
-  `git -C <repo> checkout <that-branch> && no-mistakes axi abort` (or
-  `respond --action approve`).
+1. **Preflight the baseline yourself first.** Sync the primary checkout to fresh
+   `origin/main`, then run the profile's `VERIFY_COMMANDS` (plus `npm install`).
+   Confirm they pass **before** spawning any worker. If the toolchain is broken on
+   `main`, stop and tell the user — do not send a worker into a broken baseline.
+2. **Verify = the profile's commands ONLY.** The worker prompt forbids launching/
+   browser-driving the app to "see" the change. That browser-driving spiral is what
+   burned the tokens.
+3. **Low iteration cap + active monitoring.** `--max-iterations 6` for a first run.
+   Watch the background run; if it makes no diff progress or loops on the same
+   failure, **kill it** (`TaskStop` / kill the background process).
+4. **Bounded everything, then stop.** If any step (worker, gate) can't make progress
+   in a few bounded attempts, **stop and file a GitHub issue** describing what failed
+   and why — never spin.
 
 ## The loop (host agent runs this)
 
-Repeat until 3 issues are merged, or no eligible issue remains:
+Repeat until the cap is hit, or no eligible issue remains:
 
-1. **Pick the issue (step 0).** List open issues and read candidates:
+1. **Pick the issue.** List open issues and read candidates:
    ```sh
-   gh-axi issue list -R <owner>/<repo> --state open --limit 50
-   gh-axi issue view <n> -R <owner>/<repo> --full
+   gh-axi issue list -R <REPO> --state open --limit 50
+   gh-axi issue view <n> -R <REPO> --full
    ```
-   **Screen each candidate against `main` first** — many "open" issues are already
-   shipped but never closed (on the first run, 5 of ~7 candidates were). Grep the
-   merged history and the issue's named source file:
-   `git -C <repo> log --oneline main | grep -i <keywords>` and inspect the file for
-   the feature. **Skip** anything already implemented (flag it for the user to close
-   — you can't close issues yourself) and anything needing a backend/API the app
-   lacks. Pick the single highest UI/UX-value, genuinely-unimplemented,
-   self-contained issue.
+   **Screen each candidate against fresh `main` first** — many "open" issues are
+   already shipped but never closed. Grep merged history and the issue's named source
+   file: `git -C <LOCAL_PATH> log --oneline main | grep -i <keywords>` and inspect the
+   file. **Skip** anything already implemented (flag it for the user to close) and
+   anything needing infra the app lacks. Also skip any issue another concurrent clone
+   is actively working (check sibling checkouts' branches). Pick the single
+   highest-value, genuinely-unimplemented, in-scope, self-contained issue.
 
-2. **Implement via gnhf** (fresh worktree, fresh context). Build the worker prompt
-   by appending the issue's number/title/body to the template, and pipe it in:
+2. **Implement via gnhf** (fresh worktree off `main`, fresh context). Build the worker
+   prompt by substituting the profile's `{{PLACEHOLDERS}}` into the template and
+   appending the issue, then pipe it in:
    ```sh
-   { cat ~/.claude/skills/overnight-issue-loop/prompt-template.md; \
+   { sed -e 's/{{APP_NAME}}/.../' -e ... ~/.claude/skills/overnight-issue-loop/prompt-template.md; \
      echo; echo "## The issue to implement"; \
-     gh-axi issue view <n> -R <owner>/<repo>; } | gnhf \
-       --agent claude --worktree --prevent-sleep on --max-iterations 12 \
-       --stop-when "issue #<n> is implemented; npm run typecheck, npm run lint, and npm test all pass; the work is committed on the gnhf feature branch; nothing pushed/PR'd/merged"
+     gh-axi issue view <n> -R <REPO>; } | gnhf \
+       --agent claude --worktree --prevent-sleep on --max-iterations 6 \
+       --stop-when "issue #<n> is implemented; <VERIFY_COMMANDS> all pass; the work is committed on the gnhf feature branch; nothing pushed/PR'd/merged"
    ```
-   Run it in the background (a run exceeds the foreground command timeout).
+   Run it in the background and **monitor** it (a run exceeds the foreground timeout).
+   Substitute `VERIFY_COMMANDS` literally so the worker never guesses at commands.
 
 3. **Gate it (supervisor, with judgment).** First inspect the gnhf branch's diff vs
-   `main` — confirm it's in scope and sane. Then, from the gnhf worktree:
+   `main` — confirm it's in scope and sane. Then honor the profile's `GATE_NOTES`
+   (e.g. for throughline, make the branch available in the primary checkout first:
+   free the gnhf worktree if it holds the branch, then `git -C <LOCAL_PATH> checkout <branch>`).
+   Then drive the gate — see below.
 
-   a. **Create the run by pushing to the proxy.** This is what *starts* the run —
-      `no-mistakes axi run`/`rerun` only *drive* an existing run and error
-      "no previous run for branch" if none exists (the no-mistakes skill doc is
-      wrong on this point):
-      ```sh
-      git -C <worktree> push no-mistakes HEAD:<gnhf-branch>
-      ```
-      If it says "Everything up-to-date" (ref already on the proxy, no run created),
-      re-trigger with delete+repush:
-      ```sh
-      git -C <worktree> push no-mistakes :<gnhf-branch>
-      git -C <worktree> push no-mistakes HEAD:<gnhf-branch>
-      ```
-      Confirm with `no-mistakes axi` that `active_run` is now your branch.
-   b. **Drive it without `--yes`** (background it — review/test/CI each take minutes):
-      ```sh
-      no-mistakes axi run --intent "<issue goal + the key decisions/tradeoffs made>"
-      ```
-      At each `gate:`, respond by finding severity: `info`/`no-op` →
-      `respond --action approve`; `auto-fix` → `respond --action fix --findings <ids>`;
-      an `ask-user` finding or a diff that looks off → **iffy**: `axi abort`, write a
-      note, and **skip to the next issue** (rail 4). Repeat until `outcome:`.
-   c. `outcome: checks-passed` = validated, CI green, PR ready (not merged) → merge.
-
-4. **Merge + sync.** On a clean `checks-passed`/`passed`, merge the PR to main and
+4. **Merge + sync.** On a clean `passed`/`checks-passed`, merge the PR to main and
    sync local main:
    ```sh
-   gh-axi pr merge <pr> -R <owner>/<repo> --squash --delete-branch
-   git -C <repo> checkout main && git -C <repo> pull origin main
+   gh-axi pr merge <pr> -R <REPO> --squash --delete-branch
+   git -C <LOCAL_PATH> checkout main && git -C <LOCAL_PATH> pull origin main
    ```
 
-5. **Handoff notes.** Append gotchas/good-to-knows for the next iteration to the
-   loop's `notes.md` (gnhf also maintains its own per-worktree notes).
+5. **Handoff notes.** Append gotchas/good-to-knows for the next iteration to the loop's
+   `notes.md` (gnhf also maintains its own per-worktree notes).
 
 6. **Next issue** → step 1.
 
-## Picking the highest-UI/UX-value issue
+## Driving the gate  ⚠️ KNOWN LIMITATION for unattended runs
 
-Favor issues that visibly improve the user's experience and are self-contained
-enough to ship cleanly in one cycle: broken/awkward interactions, missing-but-
-expected affordances, dead-end screens. Deprioritize large multi-surface epics and
-anything not user-facing. When two are close, prefer the one that removes a clear
-friction point a real user hits first.
+**The gate cannot currently be triggered headlessly.** Verified empirically
+(2026-07-03): with a committed branch checked out in the primary checkout,
+`no-mistakes axi run --intent "..."` returns `error: no run started ... no previous
+run for branch`. `axi run` only *drives* an existing run — it does **not** create
+one. A run is **triggered only by `git push no-mistakes <branch>` through the push
+shim**, and:
+
+- When an **agent** runs that push, it **bypasses the shim** — writes the ref
+  without triggering a run, and *blocks* the real trigger. So the agent must NOT
+  `git push no-mistakes` itself.
+- The shim fires only in the **user's interactive shell**. So triggering the gate is
+  currently a **human step**.
+
+**Consequence:** this loop is **semi-attended at the gate**. The worker implements +
+commits autonomously; then the host **hands the user the exact push command** and
+waits:
+```
+cd <LOCAL_PATH> && git push no-mistakes <branch>
+```
+If that push reports **"Everything up-to-date"** and no run appears (check
+`git ls-remote no-mistakes` shows the ref but `no-mistakes axi` lists no run for the
+branch), the ref is already on the proxy so the shim saw no change and didn't fire.
+Have the user **delete + re-push** to force a fresh trigger:
+```
+git push no-mistakes :<branch>      # delete stale ref on the proxy
+git push no-mistakes <branch>       # re-push → shim fires
+```
+(This most often happens when an agent's earlier `axi run` or push already wrote the
+ref. It's the trap that becomes the endless re-push spiral if done blindly — do the
+delete+repush once, then monitor; don't loop it.)
+
+After the user pushes, the no-mistakes proxy owns the pipeline (review → test →
+document → lint → push → PR → CI). The host then **monitors** `no-mistakes axi status`
+(do NOT drive with `axi run`/`respond` — per global CLAUDE.md, agent-driven axi
+fails/stalls the majority of the time):
+- lands on `passed`/`checks-passed` with a PR → merge (rail 3).
+- stops at an `ask-user` finding → surface it to the user; do not merge (rail 4).
+
+**Do not spiral.** If the gate errors or stalls, **stop and report/file an issue** —
+never re-push/`daemon restart` in a loop. (A stale-daemon `"no previous run"` after an
+`init` is a separate, rarer case fixable with `daemon restart`; don't conflate it with
+the normal "not triggered yet" state.)
+
+**Fully-unattended operation is an OPEN PROBLEM:** it needs a headless trigger that
+goes through the shim (or an equivalent). Until that exists, an "overnight" run still
+needs a human to push at each gate. Flag this to the user rather than pretending the
+loop is end-to-end autonomous.
 
 ## Common mistakes
 
 - **Worker runs no-mistakes / merges.** It must only implement + verify + commit.
-  Gate and merge are the supervisor's, where stop-if-iffy judgment lives.
-- **Using `--yes` on the gate.** That auto-resolves `ask-user` findings, defeating
-  stop-if-iffy. Drive gates manually for this loop.
-- **Worker invokes the superpowers `brainstorming` skill.** It hard-gates on user
-  approval and will stall the unattended run. The worker does brainstorming-style
-  *reasoning* (pros/cons, self-decide favoring UX) without the approval gate.
-- **Merging an iffy diff to keep momentum.** Skip-and-continue instead; leave it for
-  morning review.
-- **Picking infra/backend issues.** UI/UX only for this loop.
-- **Re-doing a shipped issue.** Screen every candidate against `main` first — many
-  open issues are already merged but never closed.
-- **Expecting `axi run` to start the run.** It only *drives*; create the run with
-  `git push no-mistakes HEAD:<branch>` first (delete+repush if "up-to-date").
-- **Not clearing a stale daemon run.** A parked/timed-out run holds the single slot
-  forever and blocks every gate; merging its PR on GitHub doesn't clear it. Pre-check
-  in Preflight and `axi abort`/`respond` to free it.
+- **Worker launches/drives the app to verify.** Forbidden — that's the token spiral.
+  Verify with the profile's commands only.
+- **Skipping the preflight.** Always confirm the baseline builds+tests on `main`
+  before spawning a worker.
+- **Inventing verify commands.** Use only what the repo actually has (throughline has
+  no `lint`/`typecheck`).
+- **Agent-pushing to the `no-mistakes` remote / driving `axi run`.** The agent push
+  bypasses the shim and blocks the trigger; `axi run` errors "no previous run". The
+  gate is triggered by the **user's** shimmed `git push no-mistakes <branch>` — hand
+  it to them, then monitor (see "Driving the gate").
+- **Pretending the loop is fully unattended.** It is semi-attended at the gate until a
+  headless trigger exists. Say so.
+- **Re-doing a shipped issue.** Screen every candidate against `main` first.
+- **Colliding with a concurrent clone.** Check sibling checkouts' active branches so
+  two loops don't work the same issue.
+- **Letting a flaky gate spin.** Bound the attempts; stop + file an issue instead.
 - **Assuming the backlog stays shippable.** Clean self-contained issues run out fast;
-  what remains is often epics/backend. Stop early (rail 1) rather than force an epic.
+  stop early rather than force an epic.
