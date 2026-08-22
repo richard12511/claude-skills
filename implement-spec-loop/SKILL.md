@@ -80,7 +80,7 @@ At each `READY_FOR_REVIEW` handoff:
 3. Spawn both reviewers together as fresh isolated agents.
 4. Prefer `gpt-5.6-terra` with high reasoning for Standards and `gpt-5.6-sol` with medium reasoning for Spec. If unavailable, use the nearest available frontier model and record the substitution.
 5. Aggregate reports side by side. Fix error-level findings and anything affecting correctness; a round containing only informational nits may pass under repository policy.
-6. Reactivate the original worker for fixes, tests, and a new commit. Allow at most two review fix rounds per ticket.
+6. Reactivate the original worker for fixes, tests, and a new commit. Allow at most three review fix rounds per ticket.
 
 If no-mistakes later makes a behavior-changing fix, repeat both axes before merge. At a post-fix approval gate, keep the gate parked, run the external reviewers read-only, and feed accepted defects back through no-mistakes' `--add-finding`/fix mechanism before approval. Mechanical fixes already re-reviewed by no-mistakes do not require another external review. If the pipeline reaches `checks-passed` without a gate where a discovered post-fix correctness defect can legally be submitted, do not edit, abort, or merge around the live monitor; mark the ticket `agent-stalled` with the exact custody state and require an explicit recovery decision.
 
