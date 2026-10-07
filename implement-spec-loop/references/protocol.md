@@ -68,6 +68,9 @@ Maintain one edited parent comment marked `<!-- spec-program-ledger:v1 -->`. Kee
   "release_target": null,
   "release_nonce": null,
   "parent_hash": "sha256",
+  "program_base_sha": "default-branch commit when the program started",
+  "exploration_notes": "~/.claude/spec-program-notes/<repo>-<parent>/README.md",
+  "final_review": null,
   "limits": {"pool": 3, "ticket_hours": 3, "program_hours": 8},
   "tickets": {
     "553": {
@@ -138,6 +141,8 @@ Build the ready frontier. Rank candidates by:
 1. greatest number of unresolved downstream descendants unlocked;
 2. lowest GitHub issue number as deterministic tie-breaker.
 
+Do not lease the first ticket until shared exploration has returned its notes path or its skip is recorded. The explorer occupies one agent slot while it runs.
+
 Lease up to the number of clean available clones and agent slots. Sequential dependencies wait for verified closure, not merely an open PR or `checks-passed` gate.
 
 Never select a ticket carrying `agent-in-progress`, `needs-human`, or `agent-stalled`, or one with an open PR, active gate, unresolved blocker, or another run's claim. Block descendants of escalated or stalled tickets while continuing independent siblings.
@@ -182,7 +187,7 @@ Reject a handoff whose clone, branch, or HEAD disagrees with reconstructed Git s
 
 ## 7. Review and gate budgets
 
-Implementation contexts: one fresh context per ticket, plus at most one fresh retry after a no-progress failure. Maximum primary worker contexts: twice the child count.
+Implementation contexts: at least one fresh context per ticket phase, plus at most one fresh retry after a no-progress failure. Prefer a new context for `implement`, each `fix-review`, and `gate`, inheriting durable artifacts rather than a transcript; retire and respawn a worker that passes roughly 250k tokens, has been resumed repeatedly, or is entering a phase that mostly executes rather than reasons. Retirement and host-side transcript loss are not retries and never consume `worker_retries`. Cap total primary worker contexts at four times the child count so phase-scoping cannot mask a genuinely stuck ticket.
 
 External code review:
 
@@ -239,11 +244,13 @@ Before merging a ticket PR, require all of:
 - all gate fixes are accounted for;
 - any behavior-changing gate fix received external two-axis review.
 
+The integration-fix PR is the one exception to the one-child rule: it belongs to the parent, needs every child merged and closed, and replaces two-axis review with the whole-spec review it answers.
+
 Merge one PR at a time using the repository's normal enabled strategy. Never bypass protections or use admin merge. After each merge, leave other live CI monitors alone; they own ordinary conflict repair and will repush as needed.
 
 Verify GitHub `mergedAt` and no-mistakes terminal `passed`. If the child remains open, close it only after comparing the final merged diff with every acceptance criterion; add an evidence comment linking the PR. Then recycle the clone and recalculate the frontier.
 
-At program end, audit every parent requirement against the child set and merged diffs. Only a complete mapping permits the summary comment and parent closure.
+At program end, run the whole-spec review over `program_base_sha` to the current default head, merge any integration-fix PR under the same eligibility rules as a ticket PR, then audit every parent requirement against the child set, the merged diffs, and the review's Spec report. Only a complete mapping permits the summary comment and parent closure.
 
 ## 10. Time and progress guards
 
