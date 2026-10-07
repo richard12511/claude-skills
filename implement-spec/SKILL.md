@@ -7,6 +7,8 @@ description: Select and implement exactly one best ready ticket from a parent sp
 
 Turn a parent spec into one safe implementation step. Discover its ticket set, calculate the open frontier, choose one ticket deterministically, and follow the installed `implement` skill with that ticket as the sole scope.
 
+`implement` is user-invocable only. Never try to invoke it as a skill or slash command. Read its `SKILL.md` file directly — `~/.claude/skills/implement/SKILL.md`, or the equivalent path where skills are installed for this environment — and follow its contents as written.
+
 ## Non-negotiable scope
 
 - Implement exactly one child ticket per invocation.
@@ -63,11 +65,11 @@ Before implementation, confirm the repository is in a valid lifecycle state. Do 
 
 ## 5. Implement only the selection
 
-Load and follow the installed `implement` skill with the selected child ticket as its complete scope. Also follow any repository-mandated design, TDD, validation, or review skills.
+Read the installed `implement` skill's `SKILL.md` completely and follow it with the selected child ticket as its complete scope. Do not attempt to invoke `implement` as a skill or slash command; it is user-invocable only. Also follow any repository-mandated design, TDD, validation, or review skills.
 
 Pass the selected ticket's full body, comments, parent context, and blocker evidence into implementation. Parent context explains intent but does not expand scope.
 
-If `implement` is unavailable, stop and report that dependency. Do not improvise a different shipping workflow.
+If the `implement` skill file cannot be found or read, stop and report that dependency. Do not improvise a different shipping workflow.
 
 ## 6. Hand off
 

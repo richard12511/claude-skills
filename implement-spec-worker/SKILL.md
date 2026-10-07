@@ -9,12 +9,13 @@ Serve one coordinator and one child ticket. Never select a ticket, schedule revi
 
 Require a coordinator assignment containing:
 
-- phase: `implement`, `fix-review`, `gate`, or `resume`;
+- phase: `implement`, `fix-review`, `integration-fix`, `gate`, or `resume`;
 - parent and child issue numbers plus full current requirements;
 - absolute dedicated clone path, branch, base SHA, and expected HEAD when applicable;
 - run ID and coordinator identity;
 - blockers and requirement hashes;
 - exact review findings or gate decision when applicable;
+- the shared exploration notes path, or a recorded skip;
 - `resume_phase` when phase is `resume`;
 - repository-specific policy overrides recorded by the coordinator, when any;
 - complete user intent for no-mistakes.
@@ -28,17 +29,18 @@ If the assignment is incomplete or reconstructed Git/GitHub state disagrees, ret
 - Preserve user changes. Never reset, stash, overwrite, delete, or switch away from ambiguous work.
 - Never spawn any subagent. All fan-out and every reviewer remain coordinator-owned. Questions go to the coordinator.
 - Keep the branch name, clone path, base SHA, head SHA, tests, commits, PR, gate run, and unresolved items current in every handoff.
-- Prefer `gpt-5.6-sol` with high reasoning for implementation and fixes. If the model is unavailable, continue on the nearest available frontier model and report the substitution.
+- Prefer Claude `opus` with high reasoning for implementation and fixes. If the model is unavailable, continue on the nearest available frontier model and report the substitution.
 
 ## Phase: implement
 
 1. Confirm the assigned clone has the exact origin, clean tree, checked-out fresh default branch at the coordinator's recorded base, and no unrelated active no-mistakes run.
 2. Create the assigned `codex/issue-N-slug` feature branch from that exact base. Do not start from a cached or unverified branch.
-3. Read the installed upstream `implement` skill completely at runtime. Follow its implementation, TDD, focused-testing, full-validation, and commit requirements, plus repository-mandated skills and checks.
-4. Override only upstream `implement`'s final `/code-review` step: do not invoke it here. The coordinator owns phase-aware two-axis review scheduling.
-5. Implement exactly the child acceptance criteria. Commit only ticket-owned changes.
-6. Run all repository-required handoff checks, including build and smoke commands when mandated.
-7. Return `READY_FOR_REVIEW` with the structured JSON handoff below, then become idle while preserving context.
+3. Read the shared exploration notes' index and only the area files it maps to this ticket. They describe the program's starting commit: use them to orient, verify against current code, and never let them outrank the ticket or repository instructions. Never write to the notes directory.
+4. Read the installed upstream `implement` skill completely at runtime. Follow its implementation, TDD, focused-testing, full-validation, and commit requirements, plus repository-mandated skills and checks.
+5. Override only upstream `implement`'s final `/code-review` step: do not invoke it here. The coordinator owns phase-aware two-axis review scheduling.
+6. Implement exactly the child acceptance criteria. Commit only ticket-owned changes.
+7. Run all repository-required handoff checks, including build and smoke commands when mandated.
+8. Return `READY_FOR_REVIEW` with the structured JSON handoff below, then become idle while preserving context.
 
 If no durable progress exists by the first checkpoint, return a precise blocker and current fingerprint. Do not keep investigating without a receipt.
 
@@ -51,6 +53,15 @@ If no durable progress exists by the first checkpoint, return a precise blocker 
 5. Commit the fixes on the same branch and return `REVIEW_FIX_COMPLETE` with the new HEAD.
 
 Do not run reviewers yourself. The coordinator decides whether another review round is required.
+
+## Phase: integration-fix
+
+The coordinator assigns this once per program, after every child has merged, with the parent as the ticket and the accepted whole-spec review findings as the scope.
+
+1. Verify the clean clone and fresh default branch exactly as in `implement`, then create the assigned `codex/spec-<parent>-integration-fixes` branch.
+2. Fix every accepted finding in one batch, under the same production-path regression-test and no-weakened-assertion rules as `fix-review`. Do not fix unaccepted findings or expand into new work.
+3. If a finding turns out to need a product decision, return `NEEDS_HUMAN` for that finding and still fix the rest.
+4. Run the repository-required handoff checks, commit, and return `REVIEW_FIX_COMPLETE`. The coordinator then assigns `gate` directly.
 
 ## Phase: gate
 
